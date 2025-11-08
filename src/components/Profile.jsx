@@ -11,6 +11,7 @@ function Profile() {
   const [loading, setLoading] = useState(true);
   const [loadingTeams, setLoadingTeams] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [userData, setUserData] = useState({
     username: '',
@@ -18,12 +19,28 @@ function Profile() {
     email: '',
     role: '',
     team: '',
-    createdAt: ''
+    department: '',
+    position: '',
+    branch: '',
+    shift: ''
   });
 
   const [teams, setTeams] = useState([
     { value: '', label: 'Chưa chọn team' }
   ]);
+
+  const [departments, setDepartments] = useState([
+    { value: '', label: 'Chưa chọn bộ phận' }
+  ]);
+
+  const [positions, setPositions] = useState([
+    { value: '', label: 'Chưa chọn vị trí' }
+  ]);
+
+  const [customDepartment, setCustomDepartment] = useState('');
+  const [customPosition, setCustomPosition] = useState('');
+  const [showCustomDepartment, setShowCustomDepartment] = useState(false);
+  const [showCustomPosition, setShowCustomPosition] = useState(false);
 
   // Password change states
   const [showPasswordSection, setShowPasswordSection] = useState(false);
@@ -34,8 +51,13 @@ function Profile() {
   });
   const [changingPassword, setChangingPassword] = useState(false);
 
+  // Check if user can edit (only admin and leader)
+  const canEdit = userData.role === 'admin' || userData.role === 'leader';
+
   useEffect(() => {
     loadTeamsFromHumanResources();
+    loadDepartmentsFromHumanResources();
+    loadPositionsFromHumanResources();
     loadUserProfile();
   }, []);
 
@@ -76,6 +98,88 @@ function Profile() {
     }
   };
 
+  const loadDepartmentsFromHumanResources = async () => {
+    try {
+      const hrRef = ref(database, 'human_resources');
+      const snapshot = await get(hrRef);
+      
+      if (snapshot.exists()) {
+        const hrData = snapshot.val();
+        
+        // Extract unique departments from human_resources
+        const uniqueDepartments = [...new Set(
+          Object.values(hrData)
+            .map(item => item['Bộ phận'])
+            .filter(Boolean)
+        )];
+        
+        // Convert to dropdown format
+        const departmentOptions = [
+          { value: '', label: 'Chưa chọn bộ phận' },
+          ...uniqueDepartments.sort().map(dept => ({
+            value: dept,
+            label: dept
+          })),
+          { value: '__custom__', label: '➕ Nhập mới' }
+        ];
+        
+        setDepartments(departmentOptions);
+      } else {
+        setDepartments([
+          { value: '', label: 'Chưa chọn bộ phận' },
+          { value: '__custom__', label: '➕ Nhập mới' }
+        ]);
+      }
+    } catch (error) {
+      console.error('Error loading departments from Human Resources:', error);
+      setDepartments([
+        { value: '', label: 'Lỗi tải danh sách bộ phận' },
+        { value: '__custom__', label: '➕ Nhập mới' }
+      ]);
+    }
+  };
+
+  const loadPositionsFromHumanResources = async () => {
+    try {
+      const hrRef = ref(database, 'human_resources');
+      const snapshot = await get(hrRef);
+      
+      if (snapshot.exists()) {
+        const hrData = snapshot.val();
+        
+        // Extract unique positions from human_resources
+        const uniquePositions = [...new Set(
+          Object.values(hrData)
+            .map(item => item['Vị trí'])
+            .filter(Boolean)
+        )];
+        
+        // Convert to dropdown format
+        const positionOptions = [
+          { value: '', label: 'Chưa chọn vị trí' },
+          ...uniquePositions.sort().map(pos => ({
+            value: pos,
+            label: pos
+          })),
+          { value: '__custom__', label: '➕ Nhập mới' }
+        ];
+        
+        setPositions(positionOptions);
+      } else {
+        setPositions([
+          { value: '', label: 'Chưa chọn vị trí' },
+          { value: '__custom__', label: '➕ Nhập mới' }
+        ]);
+      }
+    } catch (error) {
+      console.error('Error loading positions from Human Resources:', error);
+      setPositions([
+        { value: '', label: 'Lỗi tải danh sách vị trí' },
+        { value: '__custom__', label: '➕ Nhập mới' }
+      ]);
+    }
+  };
+
   const loadUserProfile = async () => {
     try {
       const userId = localStorage.getItem('userId');
@@ -85,18 +189,36 @@ function Profile() {
         return;
       }
 
+      // Get user info from users table
       const userRef = ref(database, `users/${userId}`);
-      const snapshot = await get(userRef);
+      const userSnapshot = await get(userRef);
 
-      if (snapshot.exists()) {
-        const data = snapshot.val();
+      if (userSnapshot.exists()) {
+        const userData = userSnapshot.val();
+        const userEmail = userData.email;
+        
+        // Find corresponding data in human_resources by email
+        const hrRef = ref(database, 'human_resources');
+        const hrSnapshot = await get(hrRef);
+        
+        let hrData = null;
+        if (hrSnapshot.exists()) {
+          const allHrData = hrSnapshot.val();
+          // Find the HR record matching this user's email
+          hrData = Object.values(allHrData).find(hr => hr.email === userEmail);
+        }
+        
+        // Combine data from users and human_resources
         setUserData({
-          username: data.username || '',
-          name: data.name || '',
-          email: data.email || '',
-          role: data.role || 'user',
-          team: data.team || '',
-          createdAt: data.createdAt || ''
+          username: userData.username || '',
+          name: hrData?.['Họ Và Tên'] || userData.name || '',
+          email: userEmail || '',
+          role: userData.role || 'user',
+          team: hrData?.['Team'] || userData.team || '',
+          department: hrData?.['Bộ phận'] || '',
+          position: hrData?.['Vị trí'] || '',
+          branch: hrData?.['chi nhánh'] || '',
+          shift: hrData?.['Ca'] || ''
         });
       }
     } catch (error) {
@@ -112,6 +234,31 @@ function Profile() {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    
+    // Handle custom department
+    if (name === 'department') {
+      if (value === '__custom__') {
+        setShowCustomDepartment(true);
+        setUserData(prev => ({ ...prev, department: '' }));
+        return;
+      } else {
+        setShowCustomDepartment(false);
+        setCustomDepartment('');
+      }
+    }
+    
+    // Handle custom position
+    if (name === 'position') {
+      if (value === '__custom__') {
+        setShowCustomPosition(true);
+        setUserData(prev => ({ ...prev, position: '' }));
+        return;
+      } else {
+        setShowCustomPosition(false);
+        setCustomPosition('');
+      }
+    }
+    
     setUserData(prev => ({
       ...prev,
       [name]: value
@@ -120,21 +267,67 @@ function Profile() {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    
+    // Check permission
+    if (!canEdit) {
+      toast.error('Bạn không có quyền chỉnh sửa thông tin!', {
+        position: "top-right",
+        autoClose: 4000,
+      });
+      return;
+    }
+    
+    // Chỉ lưu khi đang ở chế độ edit
+    if (!isEditing) {
+      console.log('Not in edit mode, preventing save');
+      return;
+    }
+    
+    console.log('Starting save process...');
     setSaving(true);
     setMessage({ type: '', text: '' });
 
     try {
       const userId = localStorage.getItem('userId');
       const userRef = ref(database, `users/${userId}`);
+      
+      // Use custom values if provided
+      const finalDepartment = showCustomDepartment ? customDepartment : userData.department;
+      const finalPosition = showCustomPosition ? customPosition : userData.position;
 
-      // Cập nhật thông tin (không update username và password)
+      // Update user table
       await update(userRef, {
         name: userData.name,
         email: userData.email,
         team: userData.team
       });
 
-      // Cập nhật localStorage
+      // Update human_resources table
+      const hrRef = ref(database, 'human_resources');
+      const hrSnapshot = await get(hrRef);
+      
+      if (hrSnapshot.exists()) {
+        const allHrData = hrSnapshot.val();
+        // Find the HR record key matching this user's email
+        const hrKey = Object.keys(allHrData).find(key => 
+          allHrData[key].email === userData.email
+        );
+        
+        if (hrKey) {
+          const hrRecordRef = ref(database, `human_resources/${hrKey}`);
+          await update(hrRecordRef, {
+            'Họ Và Tên': userData.name,
+            email: userData.email,
+            'Team': userData.team,
+            'Bộ phận': finalDepartment,
+            'Vị trí': finalPosition,
+            'chi nhánh': userData.branch,
+            'Ca': userData.shift
+          });
+        }
+      }
+
+      // Update localStorage
       localStorage.setItem('username', userData.username);
       localStorage.setItem('userEmail', userData.email);
       localStorage.setItem('userTeam', userData.team);
@@ -143,6 +336,9 @@ function Profile() {
         position: "top-right",
         autoClose: 3000,
       });
+      
+      // Tắt chế độ chỉnh sửa sau khi lưu thành công
+      setIsEditing(false);
 
     } catch (error) {
       console.error('Error saving profile:', error);
@@ -364,7 +560,7 @@ function Profile() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition"
                 placeholder="Nhập họ và tên"
                 required
-                disabled={saving}
+                disabled={saving || !isEditing || !canEdit}
               />
             </div>
 
@@ -381,7 +577,7 @@ function Profile() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition"
                 placeholder="email@example.com"
                 required
-                disabled={saving}
+                disabled={saving || !isEditing || !canEdit}
               />
             </div>
 
@@ -396,7 +592,7 @@ function Profile() {
                   value={userData.team}
                   onChange={handleChange}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition"
-                  disabled={saving || loadingTeams}
+                  disabled={saving || loadingTeams || !isEditing || !canEdit}
                 >
                   {loadingTeams ? (
                     <option value="">Đang tải danh sách team...</option>
@@ -420,53 +616,210 @@ function Profile() {
               )}
             </div>
 
-            {/* Created At - Full Width */}
-            <div className="md:col-span-2">
+            {/* Department */}
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Ngày tạo tài khoản
+                Bộ phận
               </label>
-              <input
-                type="text"
-                value={formatDate(userData.createdAt)}
-                disabled
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-50 text-gray-600 cursor-not-allowed"
-              />
+              {showCustomDepartment ? (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customDepartment}
+                    onChange={(e) => setCustomDepartment(e.target.value)}
+                    className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition"
+                    placeholder="Nhập bộ phận mới"
+                    disabled={saving || !isEditing || !canEdit}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCustomDepartment(false);
+                      setCustomDepartment('');
+                    }}
+                    className="px-3 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition"
+                    disabled={saving || !isEditing || !canEdit}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <select
+                  name="department"
+                  value={userData.department}
+                  onChange={handleChange}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition"
+                  disabled={saving || !isEditing || !canEdit}
+                >
+                  {departments.map(dept => (
+                    <option key={dept.value} value={dept.value}>
+                      {dept.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Position */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Vị trí
+              </label>
+              {showCustomPosition ? (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customPosition}
+                    onChange={(e) => setCustomPosition(e.target.value)}
+                    className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition"
+                    placeholder="Nhập vị trí mới"
+                    disabled={saving || !isEditing || !canEdit}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCustomPosition(false);
+                      setCustomPosition('');
+                    }}
+                    className="px-3 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition"
+                    disabled={saving || !isEditing || !canEdit}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <select
+                  name="position"
+                  value={userData.position}
+                  onChange={handleChange}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition"
+                  disabled={saving || !isEditing || !canEdit}
+                >
+                  {positions.map(pos => (
+                    <option key={pos.value} value={pos.value}>
+                      {pos.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Branch */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Chi nhánh
+              </label>
+              <select
+                name="branch"
+                value={userData.branch}
+                onChange={handleChange}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition"
+                disabled={saving || !isEditing || !canEdit}
+              >
+                <option value="">-- Chọn chi nhánh --</option>
+                <option value="Hà Nội">Hà Nội</option>
+                <option value="HCM">HCM</option>
+              </select>
+            </div>
+
+            {/* Shift */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Ca
+              </label>
+              <select
+                name="shift"
+                value={userData.shift}
+                onChange={handleChange}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent transition"
+                disabled={saving || !isEditing || !canEdit}
+              >
+                <option value="">-- Chọn ca --</option>
+                <option value="Giữa ca">Giữa ca</option>
+                <option value="Hết ca">Hết ca</option>
+              </select>
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="mt-8 flex gap-4">
-            <button
-              type="submit"
-              disabled={saving}
-              className={`flex-1 py-3 px-6 rounded-lg font-semibold text-white transition ${
-                saving
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-primary hover:bg-green-700 active:bg-green-800'
-              }`}
-            >
-              {saving ? (
-                <span className="flex items-center justify-center">
-                  <svg className="animate-spin h-5 w-5 mr-3" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Đang lưu...
-                </span>
+          {/* Action Buttons - Only for Admin and Leader */}
+          {canEdit && (
+            <div className="mt-8 flex gap-4">
+              {!isEditing ? (
+                // View Mode - Show Edit Button
+                <>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log('Edit button clicked');
+                      setIsEditing(true);
+                    }}
+                    className="flex-1 py-3 px-6 rounded-lg font-semibold text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 transition"
+                  >
+                    ✏️ Chỉnh sửa thông tin
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/home')}
+                    className="px-6 py-3 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition"
+                  >
+                    Quay lại
+                  </button>
+                </>
               ) : (
-                '💾 Lưu thay đổi'
-              )}
-            </button>
+                // Edit Mode - Show Save and Cancel Buttons
+                <>
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className={`flex-1 py-3 px-6 rounded-lg font-semibold text-white transition ${
+                      saving
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : 'bg-primary hover:bg-green-700 active:bg-green-800'
+                    }`}
+                  >
+                    {saving ? (
+                      <span className="flex items-center justify-center">
+                        <svg className="animate-spin h-5 w-5 mr-3" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Đang lưu...
+                      </span>
+                    ) : (
+                      '💾 Lưu thay đổi'
+                    )}
+                  </button>
 
-            <button
-              type="button"
-              onClick={() => navigate('/home')}
-              disabled={saving}
-              className="px-6 py-3 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition"
-            >
-              Quay lại
-            </button>
-          </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditing(false);
+                      loadUserProfile(); // Reload data to cancel changes
+                    }}
+                    disabled={saving}
+                    className="px-6 py-3 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition"
+                  >
+                    Hủy
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          
+          {/* Back Button for Regular Users */}
+          {!canEdit && (
+            <div className="mt-8">
+              <button
+                type="button"
+                onClick={() => navigate('/home')}
+                className="w-full px-6 py-3 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition"
+              >
+                Quay lại
+              </button>
+            </div>
+          )}
         </form>
       </div>
 
@@ -604,7 +957,8 @@ function Profile() {
             <p className="font-semibold mb-1">💡 Lưu ý:</p>
             <ul className="list-disc list-inside space-y-1">
               <li>Tên đăng nhập và vai trò không thể thay đổi</li>
-              <li>Thông tin team giúp phân loại báo cáo theo phòng ban</li>
+              <li>Chỉ Admin và Leader mới có quyền chỉnh sửa thông tin profile</li>
+              <li>User thường chỉ có thể xem thông tin và đổi mật khẩu</li>
               <li>Bạn có thể đổi mật khẩu bất kỳ lúc nào để bảo mật tài khoản</li>
               <li>Mật khẩu mới phải có ít nhất 6 ký tự</li>
             </ul>

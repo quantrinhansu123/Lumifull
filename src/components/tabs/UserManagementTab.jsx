@@ -10,6 +10,7 @@ export function UserManagementTab({ userRole, userTeam, searchText, teamFilter }
   const [editingUser, setEditingUser] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [deletingUser, setDeletingUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [newUser, setNewUser] = useState({
     'Họ Và Tên': '',
@@ -263,20 +264,29 @@ export function UserManagementTab({ userRole, userTeam, searchText, teamFilter }
     }
   };
 
+  // Open delete confirmation modal
+  const openDeleteConfirm = (user) => {
+    setDeletingUser(user);
+  };
+
+  // Close delete confirmation modal
+  const closeDeleteConfirm = () => {
+    setDeletingUser(null);
+  };
+
   // Delete user from Firebase
-  const handleDeleteUser = async (firebaseKey) => {
-    if (!window.confirm('Bạn có chắc chắn muốn xóa nhân sự này?')) {
-      return;
-    }
+  const handleDeleteUser = async () => {
+    if (!deletingUser) return;
 
     try {
-      const userRef = ref(database, `human_resources/${firebaseKey}`);
+      const userRef = ref(database, `human_resources/${deletingUser.firebaseKey}`);
       await remove(userRef);
       
       // Update local state
-      setUsers(prev => prev.filter(user => user.firebaseKey !== firebaseKey));
-      setFilteredUsers(prev => prev.filter(user => user.firebaseKey !== firebaseKey));
+      setUsers(prev => prev.filter(user => user.firebaseKey !== deletingUser.firebaseKey));
+      setFilteredUsers(prev => prev.filter(user => user.firebaseKey !== deletingUser.firebaseKey));
       
+      closeDeleteConfirm();
       toast.success('Xóa nhân sự thành công!');
     } catch (err) {
       console.error('Error deleting user:', err);
@@ -384,7 +394,7 @@ export function UserManagementTab({ userRole, userTeam, searchText, teamFilter }
                         </button>
                         {userRole === 'admin' && (
                           <button
-                            onClick={() => handleDeleteUser(user.firebaseKey)}
+                            onClick={() => openDeleteConfirm(user)}
                             className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
                             title="Xóa"
                           >
@@ -818,6 +828,72 @@ export function UserManagementTab({ userRole, userTeam, searchText, teamFilter }
                 className="px-5 py-2.5 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
               >
                 ✓ Thêm nhân sự
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletingUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-red-600 to-pink-600 px-6 py-4 rounded-t-lg">
+              <h3 className="text-xl font-bold text-white">⚠️ Xác nhận xóa nhân sự</h3>
+            </div>
+
+            {/* Content */}
+            <div className="p-6">
+              <p className="text-gray-700 mb-4">
+                Bạn có chắc chắn muốn xóa nhân sự này không?
+              </p>
+              
+              <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 space-y-2">
+                <p className="text-sm">
+                  <span className="font-semibold text-gray-700">Họ và Tên:</span>{' '}
+                  <span className="text-gray-900">{deletingUser['Họ Và Tên']}</span>
+                </p>
+                <p className="text-sm">
+                  <span className="font-semibold text-gray-700">Email:</span>{' '}
+                  <span className="text-gray-900">{deletingUser.email}</span>
+                </p>
+                <p className="text-sm">
+                  <span className="font-semibold text-gray-700">Bộ phận:</span>{' '}
+                  <span className="text-gray-900">{deletingUser['Bộ phận'] || '-'}</span>
+                </p>
+                <p className="text-sm">
+                  <span className="font-semibold text-gray-700">Team:</span>{' '}
+                  <span className="text-gray-900">{deletingUser.Team || '-'}</span>
+                </p>
+                <p className="text-sm">
+                  <span className="font-semibold text-gray-700">Vị trí:</span>{' '}
+                  <span className="text-gray-900">{deletingUser['Vị trí'] || '-'}</span>
+                </p>
+                <p className="text-sm">
+                  <span className="font-semibold text-gray-700">Chi nhánh:</span>{' '}
+                  <span className="text-gray-900">{deletingUser['chi nhánh'] || '-'}</span>
+                </p>
+              </div>
+
+              <p className="text-red-600 font-medium text-sm mt-4">
+                ⚠️ Hành động này không thể hoàn tác!
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="bg-gray-50 px-6 py-4 rounded-b-lg flex justify-end gap-3">
+              <button
+                onClick={closeDeleteConfirm}
+                className="px-5 py-2.5 bg-gray-500 text-white font-medium rounded-lg hover:bg-gray-600 transition-colors"
+              >
+                ✗ Hủy
+              </button>
+              <button
+                onClick={handleDeleteUser}
+                className="px-5 py-2.5 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors"
+              >
+                🗑️ Xóa nhân sự
               </button>
             </div>
           </div>
