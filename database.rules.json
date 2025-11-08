@@ -1,0 +1,8 @@
+{
+  "rules": {
+    "reports": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}
