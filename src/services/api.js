@@ -192,3 +192,169 @@ export const updateBatch = async (rows) => {
     }
     return await response.json();
 };
+
+// Fetch Van Don data với pagination và filters từ backend
+export const fetchVanDon = async (options = {}) => {
+    const {
+        page = 1,
+        limit = 50,
+        team,
+        status,
+        market = [],
+        product = [],
+        dateFrom,
+        dateTo
+    } = options;
+
+    try {
+        const params = new URLSearchParams({
+            page: page.toString(),
+            limit: limit.toString()
+        });
+
+        if (team && team !== 'all') {
+            params.append('team', team);
+        }
+        if (status) {
+            params.append('status', status);
+        }
+        if (Array.isArray(market) && market.length > 0) {
+            market.forEach(m => params.append('market', m));
+        } else if (typeof market === 'string' && market) {
+            params.append('market', market);
+        }
+        if (Array.isArray(product) && product.length > 0) {
+            product.forEach(p => params.append('product', p));
+        } else if (typeof product === 'string' && product) {
+            params.append('product', product);
+        }
+
+        // Use backend API endpoint
+        const API_URL = '/api/van-don';
+        const url = `${API_URL}?${params.toString()}`;
+        
+        console.log('Fetching Van Don from backend:', url);
+
+        // Add timeout and abort controller
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Van Don API Error:', errorText);
+            throw new Error(`API Error ${response.status}: ${response.statusText}`);
+        }
+
+        const json = await response.json();
+        
+        if (json.error) {
+            throw new Error(json.error);
+        }
+
+        // Backend trả về: { success, data, total, page, limit, totalPages, rows }
+        const data = json.data || json.rows || [];
+        
+        // Apply date filters on client side (nếu backend chưa support)
+        let filteredData = data;
+        if (dateFrom || dateTo) {
+            filteredData = data.filter(item => {
+                const orderDate = item['Ngày lên đơn'] || item['Ngày đóng hàng'] || '';
+                if (!orderDate) return true;
+                
+                // Parse date (format: DD/MM/YYYY or YYYY-MM-DD)
+                let dateValue;
+                if (orderDate.includes('/')) {
+                    const [d, m, y] = orderDate.split('/');
+                    dateValue = new Date(`${y}-${m}-${d}`);
+                } else {
+                    dateValue = new Date(orderDate);
+                }
+                
+                if (dateFrom) {
+                    const fromDate = new Date(dateFrom);
+                    if (dateValue < fromDate) return false;
+                }
+                if (dateTo) {
+                    const toDate = new Date(dateTo);
+                    toDate.setHours(23, 59, 59, 999);
+                    if (dateValue > toDate) return false;
+                }
+                return true;
+            });
+        }
+
+        return {
+            data: filteredData,
+            total: json.total || filteredData.length,
+            page: json.page || page,
+            limit: json.limit || limit,
+            totalPages: json.totalPages || Math.ceil((json.total || filteredData.length) / limit)
+        };
+
+    } catch (error) {
+        console.error('fetchVanDon error:', error);
+        
+        // Check if it's a timeout error
+        if (error.name === 'AbortError') {
+            console.error('⏱️ Request timeout - backend took too long');
+            return {
+                data: [],
+                total: 0,
+                page: page,
+                limit: limit,
+                totalPages: 0,
+                error: 'Request timeout. Vui lòng thử lại.'
+            };
+        }
+        
+        // Fallback to old API if backend fails (only for non-timeout errors)
+        console.log('Falling back to direct API...');
+        try {
+            const allData = await fetchOrders();
+            // Apply basic filters on client side
+            let filtered = allData;
+            if (team && team !== 'all') {
+                filtered = filtered.filter(item => item.Team === team);
+            }
+            if (status) {
+                filtered = filtered.filter(item => item["Trạng thái giao hàng"] === status);
+            }
+            
+            // Paginate
+            const pageNum = parseInt(page);
+            const limitNum = parseInt(limit);
+            const startIndex = (pageNum - 1) * limitNum;
+            const endIndex = startIndex + limitNum;
+            const paginated = filtered.slice(startIndex, endIndex);
+            
+            return {
+                data: paginated,
+                total: filtered.length,
+                page: pageNum,
+                limit: limitNum,
+                totalPages: Math.ceil(filtered.length / limitNum)
+            };
+        } catch (fallbackError) {
+            console.error('Fallback also failed:', fallbackError);
+            return {
+                data: [],
+                total: 0,
+                page: page,
+                limit: limit,
+                totalPages: 0,
+                error: 'Không thể tải dữ liệu. Vui lòng thử lại sau.'
+            };
+        }
+    }
+};

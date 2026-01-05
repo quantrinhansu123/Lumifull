@@ -6,6 +6,80 @@ const PROD_HOST = 'https://n-api-gamma.vercel.app';
 const SHEET_NAME = 'F3';
 const DATA_API_URL = `${PROD_HOST}/sheet/${SHEET_NAME}/data`;
 
+// Simple in-memory cache (shared across function invocations in same instance)
+// Note: In serverless, cache may be cleared between cold starts
+let cache = {
+  data: null,
+  timestamp: null,
+  ttl: 60000 // 1 minute cache
+};
+
+// Helper to get cached data or fetch new
+async function getCachedData() {
+  const now = Date.now();
+  
+  // Check if cache is valid
+  if (cache.data && cache.timestamp && (now - cache.timestamp) < cache.ttl) {
+    console.log('✅ Using cached data');
+    return cache.data;
+  }
+  
+  // Fetch new data
+  console.log('🔄 Fetching fresh data from API...');
+  try {
+    // Add timeout to prevent hanging
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    
+    const response = await fetch(DATA_API_URL, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      throw new Error(`API Error ${response.status}: ${response.statusText}`);
+    }
+    
+    const json = await response.json();
+    if (json.error) {
+      throw new Error(json.error);
+    }
+    
+    const data = json.rows || json.data || json;
+    if (!Array.isArray(data)) {
+      throw new Error('Dữ liệu trả về không đúng định dạng mảng');
+    }
+    
+    // Update cache
+    cache.data = data;
+    cache.timestamp = now;
+    
+    console.log(`✅ Loaded ${data.length} orders from external API and cached`);
+    return data;
+    
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.error('⏱️ Request timeout after 15s');
+    } else {
+      console.error('❌ Error fetching data:', error.message);
+    }
+    
+    // Return cached data even if expired, as fallback
+    if (cache.data) {
+      console.log('⚠️ Using expired cache as fallback');
+      return cache.data;
+    }
+    
+    throw error;
+  }
+}
+
 // Mock data fallback
 const mockVanDonData = [
   {
@@ -64,33 +138,12 @@ export default async function handler(req, res) {
     console.log('GET /api/van-don - Request received');
     console.log('Query params:', req.query);
     
-    // Thử fetch từ API thực tế trước
+    // Get data from cache or fetch
     let data = [];
     try {
-      console.log('Fetching from external API:', DATA_API_URL);
-      const response = await fetch(DATA_API_URL, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      });
-
-      if (response.ok) {
-        const json = await response.json();
-        if (json.error) {
-          throw new Error(json.error);
-        }
-        data = json.rows || json.data || json;
-        if (!Array.isArray(data)) {
-          throw new Error('Dữ liệu trả về không đúng định dạng mảng');
-        }
-        console.log(`✅ Loaded ${data.length} orders from external API`);
-      } else {
-        throw new Error(`API Error ${response.status}: ${response.statusText}`);
-      }
+      data = await getCachedData();
     } catch (apiError) {
-      console.warn('⚠️ External API error, using mock data:', apiError.message);
+      console.warn('⚠️ Failed to fetch data, using mock data:', apiError.message);
       data = [...mockVanDonData];
     }
     
@@ -132,6 +185,9 @@ export default async function handler(req, res) {
     const endIndex = startIndex + limitNum;
     const paginatedData = filteredData.slice(startIndex, endIndex);
     
+    // Add cache headers for client-side caching
+    res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=60');
+    
     res.status(200).json({
       success: true,
       data: paginatedData,
@@ -139,7 +195,8 @@ export default async function handler(req, res) {
       page: pageNum,
       limit: limitNum,
       totalPages: Math.ceil(filteredData.length / limitNum),
-      rows: paginatedData // Alias cho compatibility
+      rows: paginatedData, // Alias cho compatibility
+      cached: cache.timestamp ? Date.now() - cache.timestamp < cache.ttl : false
     });
   } catch (error) {
     console.error('❌ Error in /api/van-don:', error);

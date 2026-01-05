@@ -23,6 +23,8 @@ function VanDon() {
   // --- Data State ---
   const [allData, setAllData] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const [useBackendPagination, setUseBackendPagination] = useState(true); // Enable backend pagination
   // Always use BILL_OF_LADING view - ORDER_MANAGEMENT is hidden
   const [viewMode] = useState('BILL_OF_LADING');
 
@@ -111,6 +113,7 @@ function VanDon() {
 
   // --- Initialize ---
   useEffect(() => {
+    // Only load data on mount, subsequent loads handled by filter/pagination useEffect
     loadData();
     const storedChanges = localStorage.getItem('speegoPendingChanges');
     if (storedChanges) {
@@ -191,13 +194,42 @@ function VanDon() {
     setLoading(true);
     try {
       console.log('Starting data load...');
-      const data = await API.fetchOrders();
-      setAllData(data);
-
-      if (data.length === 2 && data[0]["Mã đơn hàng"] === "DEMO001") {
-        addToast('⚠️ Đang sử dụng dữ liệu demo do API lỗi. Kiểm tra kết nối mạng.', 'error', 8000);
+      
+      if (useBackendPagination) {
+        // Use backend with pagination
+        const activeTeam = bolActiveTab === 'hcm' ? 'HCM' : (bolActiveTab === 'hanoi' ? 'Hà Nội' : (omActiveTeam !== 'all' ? omActiveTeam : undefined));
+        const activeStatus = enableDateFilter ? undefined : (filterValues.status || undefined);
+        
+        const result = await API.fetchVanDon({
+          page: currentPage,
+          limit: rowsPerPage,
+          team: activeTeam,
+          status: activeStatus,
+          market: filterValues.market,
+          product: filterValues.product,
+          dateFrom: enableDateFilter ? dateFrom : undefined,
+          dateTo: enableDateFilter ? dateTo : undefined
+        });
+        
+        setAllData(result.data);
+        setTotalRecords(result.total);
+        
+        if (result.data.length === 0 && result.total === 0) {
+          addToast('⚠️ Không tìm thấy dữ liệu phù hợp', 'warning', 3000);
+        } else {
+          addToast(`✅ Đã tải ${result.data.length}/${result.total} đơn hàng (trang ${result.page}/${result.totalPages})`, 'success', 2000);
+        }
       } else {
-        addToast(`✅ Đã tải ${data.length} đơn hàng`, 'success', 2000);
+        // Fallback: Load all data (old way)
+        const data = await API.fetchOrders();
+        setAllData(data);
+        setTotalRecords(data.length);
+
+        if (data.length === 2 && data[0]["Mã đơn hàng"] === "DEMO001") {
+          addToast('⚠️ Đang sử dụng dữ liệu demo do API lỗi. Kiểm tra kết nối mạng.', 'error', 8000);
+        } else {
+          addToast(`✅ Đã tải ${data.length} đơn hàng`, 'success', 2000);
+        }
       }
 
       // Load MGT Noi Bo orders
@@ -231,6 +263,24 @@ function VanDon() {
     setCurrentPage(1);
     await loadData();
   };
+
+  // Reload data when filters or pagination change (if using backend)
+  // Skip initial mount to avoid double loading
+  const isInitialMount = useRef(true);
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    
+    if (useBackendPagination) {
+      const timeoutId = setTimeout(() => {
+        loadData();
+      }, 300); // Debounce filter changes
+      return () => clearTimeout(timeoutId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, rowsPerPage, bolActiveTab, omActiveTeam, filterValues.market, filterValues.product, enableDateFilter, dateFrom, dateTo, useBackendPagination]);
 
   const savePendingToLocalStorage = (newPending, newLegacy) => {
     const changesToSave = {};
@@ -534,10 +584,20 @@ function VanDon() {
   // Use fewer rows for Bill of Lading due to long text columns
   const effectiveRowsPerPage = viewMode === 'BILL_OF_LADING' ? 30 : rowsPerPage;
 
+  // If using backend pagination, data is already paginated
   const paginatedData = useMemo(() => {
-    return getFilteredData.slice((currentPage - 1) * effectiveRowsPerPage, currentPage * effectiveRowsPerPage);
-  }, [getFilteredData, currentPage, effectiveRowsPerPage]);
-  const totalPages = Math.ceil(getFilteredData.length / effectiveRowsPerPage);
+    if (useBackendPagination) {
+      // Data is already paginated from backend, just apply client-side filters (tracking, etc.)
+      return getFilteredData;
+    } else {
+      // Old way: paginate client-side
+      return getFilteredData.slice((currentPage - 1) * effectiveRowsPerPage, currentPage * effectiveRowsPerPage);
+    }
+  }, [getFilteredData, currentPage, effectiveRowsPerPage, useBackendPagination]);
+  
+  const totalPages = useBackendPagination 
+    ? Math.ceil(totalRecords / effectiveRowsPerPage)
+    : Math.ceil(getFilteredData.length / effectiveRowsPerPage);
 
   // --- Change Management (Shared) ---
   const processUpdateQueue = useCallback(async (forceBulk) => {
